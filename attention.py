@@ -30,7 +30,7 @@ class DinAttentionLayer(nn.Module):
         )[None, :] < user_behavior_length[:, None]  # batch_size * time_seq_len
 
         # mask
-        score = attention_score * mask.unsqueeze(1).float()  # batch_size * 1 * time_seq_len
+        score = attention_score * mask.float()  # batch_size * 1 * time_seq_len
         score = F.softmax(score, dim=-1)                                    # batch_size * 1 * time_seq_len
 
         # multiply weighted sum
