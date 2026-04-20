@@ -16,5 +16,5 @@ class EmbeddingLayer(nn.Module):
 
 if __name__ == "__main__":
     a = EmbeddingLayer(10, 12)
-    b = torch.ones((2048, )).type(torch.LongTensor)
+    b = torch.ones((2048,), dtype=torch.long)
     print(a(b).shape)  # torch.Size([2048, 12])

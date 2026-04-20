@@ -24,11 +24,13 @@ class DinAttentionLayer(nn.Module):
         attention_score = torch.transpose(attention_score, 1, 2)   # batch_size * 1 * time_seq_len
 
         # define mask by length
-        user_behavior_length = user_behavior_length.type(torch.LongTensor)
-        mask = torch.arange(user_behavior.size(1))[None, :] < user_behavior_length[:, None]  # batch_size * time_seq_len
+        user_behavior_length = user_behavior_length.long()
+        mask = torch.arange(
+            user_behavior.size(1), device=user_behavior.device
+        )[None, :] < user_behavior_length[:, None]  # batch_size * time_seq_len
 
         # mask
-        score = torch.mul(attention_score, mask.type(torch.FloatTensor))    # batch_size * 1 * time_seq_len
+        score = attention_score * mask.unsqueeze(1).float()  # batch_size * 1 * time_seq_len
         score = F.softmax(score, dim=-1)                                    # batch_size * 1 * time_seq_len
 
         # multiply weighted sum
