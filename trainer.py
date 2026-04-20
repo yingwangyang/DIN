@@ -22,6 +22,11 @@ def transform(data):
     return torch.from_numpy(data).to(device)
 
 
+def count_lines(filepath):
+    with open(filepath, "r") as f:
+        return sum(1 for _ in f)
+
+
 def prepare_data(input, target, maxlen=None, return_neg=False):
     # x: a list of sentences
     lengths_x = [len(s[4]) for s in input]
@@ -91,8 +96,11 @@ def eval(test_data, model, model_path):
     accuracy_sum = 0.0
     nums = 0
     stored_arr = []
-    for _ in range(100):
-        src, tgt = test_data.next()
+    while True:
+        try:
+            src, tgt = test_data.next()
+        except StopIteration:
+            break
         nums += 1
         uids, mids, cats, mid_his, cat_his, mid_mask, target, s1, noclk_mids, noclk_cats = prepare_data(src, tgt, return_neg=True)
         uids = transform(uids)
@@ -116,6 +124,9 @@ def eval(test_data, model, model_path):
         for p, t in zip(prob_1, target_1):
             stored_arr.append([p, t])
 
+    if nums == 0:
+        raise RuntimeError("Evaluation dataset is empty after preprocessing.")
+
     test_auc = calc_auc(stored_arr)
     accuracy_sum = accuracy_sum / nums
     loss_sum = loss_sum / nums
@@ -132,10 +143,13 @@ def train_one_epoch(epoch, model, train_data, test_data, optimizer, maxlen, test
     iter = 0
     loss_sum = 0.0
     accuracy_sum = 0.0
-    for _ in range(8000):
+    while True:
+        try:
+            src, tgt = train_data.next()
+        except StopIteration:
+            break
         optimizer.zero_grad()
 
-        src, tgt = train_data.next()
         # (B,), (B), (B), (B, 100), (B, 100), (B, 100), (B, 2), (B), (128, 100, 5), (128, 100, 5) 
         uids, mids, cats, mid_his, cat_his, mid_mask, target, s1, noclk_mids, noclk_cats = prepare_data(src, tgt, maxlen, return_neg=True)
         uids = transform(uids)
@@ -193,6 +207,15 @@ def train(
     model_path = f"{out_dir1}/cpkt_noshuff{model_type}{str(seed)}"
     best_model_path = f"{out_dir2}/cpkt_noshuff{model_type}{str(seed)}"
 
+    train_sample_count = count_lines(train_file)
+    steps_per_epoch = max(1, (train_sample_count + batch_size - 1) // batch_size)
+    effective_test_iter = min(test_iter, max(1, steps_per_epoch // 4))
+    effective_save_iter = min(save_iter, max(1, steps_per_epoch // 2))
+    print(
+        f"Train samples: {train_sample_count}, steps/epoch: {steps_per_epoch}, "
+        f"test_iter: {effective_test_iter}, save_iter: {effective_save_iter}"
+    )
+
     train_data = DataIterator(source=train_file,
                               uid_voc=uid_voc,
                               mid_voc=mid_voc,
@@ -226,7 +249,18 @@ def train(
     lr = 0.001
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, betas=(0.9, 0.999), weight_decay=0.0001)
     for epoch in range(1, epochs + 1):
-        model, optimizer = train_one_epoch(epoch, model, train_data, test_data, optimizer, maxlen, test_iter, save_iter, best_model_path, model_path)
+        model, optimizer = train_one_epoch(
+            epoch,
+            model,
+            train_data,
+            test_data,
+            optimizer,
+            maxlen,
+            effective_test_iter,
+            effective_save_iter,
+            best_model_path,
+            model_path,
+        )
 
 
 def test(
@@ -242,7 +276,7 @@ def test(
     if model_path == "" or model_path is None:
         model_path = f"best_model/cpkt_noshuff{model_type}{str(seed)}"
 
-    test_data = DataIterator(source_file=test_file,
+    test_data = DataIterator(source=test_file,
                              uid_voc=uid_voc,
                              mid_voc=mid_voc,
                              cat_voc=cat_voc,
