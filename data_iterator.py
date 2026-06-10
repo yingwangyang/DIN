@@ -33,7 +33,7 @@ class DataIterator:
                  mid_voc,
                  cat_voc,
                  batch_size=128,
-                 maxlen=100,
+                 maxlen=10,
                  skip_empty=False,
                  shuffle_each_epoch=False,
                  sort_by_length=True,
