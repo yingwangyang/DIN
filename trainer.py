@@ -32,97 +32,112 @@ def prepare_data(input, target, maxlen=None, return_neg=False):
     lengths_x = [len(s[4]) for s in input]
     seqs_mid = [inp[3] for inp in input]
     seqs_cat = [inp[4] for inp in input]
-    noclk_seqs_mid = [inp[5] for inp in input]
-    noclk_seqs_cat = [inp[6] for inp in input]
+    if return_neg:
+        noclk_seqs_mid = [inp[5] for inp in input]
+        noclk_seqs_cat = [inp[6] for inp in input]
 
     if maxlen is not None:
         new_seqs_mid = []
         neq_seqs_cat = []
-        new_noclk_seqs_mid = []
-        new_noclk_seqs_cat = []
+        if return_neg:
+            new_noclk_seqs_mid = []
+            new_noclk_seqs_cat = []
         new_lengths_x = []
         for l_x, inp in zip(lengths_x, input):
             if l_x > maxlen:
                 new_seqs_mid.append(inp[3][l_x - maxlen:])
                 neq_seqs_cat.append(inp[4][l_x - maxlen:])
-                new_noclk_seqs_mid.append(inp[5][l_x - maxlen:])
-                new_noclk_seqs_cat.append(inp[6][l_x - maxlen:])
+                if return_neg:
+                    new_noclk_seqs_mid.append(inp[5][l_x - maxlen:])
+                    new_noclk_seqs_cat.append(inp[6][l_x - maxlen:])
                 new_lengths_x.append(maxlen)
             else:
                 new_seqs_mid.append(inp[3])
                 neq_seqs_cat.append(inp[4])
-                new_noclk_seqs_mid.append(inp[5])
-                new_noclk_seqs_cat.append(inp[6])
+                if return_neg:
+                    new_noclk_seqs_mid.append(inp[5])
+                    new_noclk_seqs_cat.append(inp[6])
                 new_lengths_x.append(l_x)
         lengths_x = new_lengths_x
         seqs_mid = new_seqs_mid
         seqs_cat = neq_seqs_cat
-        noclk_seqs_mid = new_noclk_seqs_mid
-        noclk_seqs_cat = new_noclk_seqs_cat
+        if return_neg:
+            noclk_seqs_mid = new_noclk_seqs_mid
+            noclk_seqs_cat = new_noclk_seqs_cat
 
         if len(lengths_x) < 1:
             return None, None, None, None
         
     n_samples = len(seqs_mid)
     maxlen_x = np.max(lengths_x)
-    neg_samples = len(noclk_seqs_mid[0][0])
 
     mid_his = np.zeros((n_samples, maxlen_x)).astype('int64')
     cat_his = np.zeros((n_samples, maxlen_x)).astype('int64')
-    noclk_mid_his = np.zeros((n_samples, maxlen_x, neg_samples)).astype('int64')
-    noclk_cat_his = np.zeros((n_samples, maxlen_x, neg_samples)).astype('int64')
     mid_mask = np.zeros((n_samples, maxlen_x)).astype('float32')
-    for idx, [s_x, s_y, no_sx, no_sy] in enumerate(zip(seqs_mid, seqs_cat, noclk_seqs_mid, noclk_seqs_cat)):
+    if return_neg:
+        neg_samples = len(noclk_seqs_mid[0][0])
+        noclk_mid_his = np.zeros((n_samples, maxlen_x, neg_samples)).astype('int64')
+        noclk_cat_his = np.zeros((n_samples, maxlen_x, neg_samples)).astype('int64')
+
+    for idx, [s_x, s_y] in enumerate(zip(seqs_mid, seqs_cat)):
         mid_mask[idx, :lengths_x[idx]] = 1.
         mid_his[idx, :lengths_x[idx]] = s_x
         cat_his[idx, :lengths_x[idx]] = s_y
-        noclk_mid_his[idx, :lengths_x[idx], :] = no_sx
-        noclk_cat_his[idx, :lengths_x[idx], :] = no_sy
+        if return_neg:
+            noclk_mid_his[idx, :lengths_x[idx], :] = noclk_seqs_mid[idx]
+            noclk_cat_his[idx, :lengths_x[idx], :] = noclk_seqs_cat[idx]
 
-    uids = np.array([inp[0] for inp in input])
-    mids = np.array([inp[1] for inp in input])
-    cats = np.array([inp[2] for inp in input])
+    uids = np.array([inp[0] for inp in input], dtype='int64')
+    mids = np.array([inp[1] for inp in input], dtype='int64')
+    cats = np.array([inp[2] for inp in input], dtype='int64')
+    target = np.array(target, dtype='float32')
+    lengths_x = np.array(lengths_x, dtype='int64')
 
     if return_neg:
-        return uids, mids, cats, mid_his, cat_his, mid_mask, np.array(target), np.array(lengths_x), noclk_mid_his, noclk_cat_his
+        return uids, mids, cats, mid_his, cat_his, mid_mask, target, lengths_x, noclk_mid_his, noclk_cat_his
     else:
-        return uids, mids, cats, mid_his, cat_his, mid_mask, np.array(target), np.array(lengths_x)
+        return uids, mids, cats, mid_his, cat_his, mid_mask, target, lengths_x
     
 
-def eval(test_data, model, model_path):
+def eval(test_data, model, model_path, maxlen):
     test_data.reset()
 
     loss_sum = 0.0
     accuracy_sum = 0.0
     nums = 0
     stored_arr = []
-    while True:
-        try:
-            src, tgt = test_data.next()
-        except StopIteration:
-            break
-        nums += 1
-        uids, mids, cats, mid_his, cat_his, mid_mask, target, s1, noclk_mids, noclk_cats = prepare_data(src, tgt, return_neg=True)
-        uids = transform(uids)
-        mids = transform(mids)
-        cats = transform(cats)
-        mid_his = transform(mid_his)
-        cat_his = transform(cat_his)
-        mid_mask = transform(mid_mask)
-        noclk_mids = transform(noclk_mids)
-        noclk_cats = transform(noclk_cats)
-        target = transform(target)
+    was_training = model.training
+    model.eval()
+    try:
+        with torch.no_grad():
+            while True:
+                try:
+                    src, tgt = test_data.next()
+                except StopIteration:
+                    break
+                nums += 1
+                uids, mids, cats, mid_his, cat_his, mid_mask, target, s1 = prepare_data(src, tgt, maxlen, return_neg=False)
+                uids = transform(uids)
+                mids = transform(mids)
+                cats = transform(cats)
+                mid_his = transform(mid_his)
+                cat_his = transform(cat_his)
+                mid_mask = transform(mid_mask)
+                target = transform(target)
 
-        prob = model(uids, mids, cats, mid_his, cat_his, mid_mask, noclk_mids, noclk_cats)
+                prob = model(uids, mids, cats, mid_his, cat_his, mid_mask)
 
-        loss = - torch.mean(torch.log(prob) * target)
-        acc = torch.sum(torch.round(prob) * target) / target.shape[0]
-        loss_sum += loss
-        accuracy_sum += acc
-        prob_1 = prob[:, 0].tolist()
-        target_1 = target[:, 0].tolist()
-        for p, t in zip(prob_1, target_1):
-            stored_arr.append([p, t])
+                loss = - torch.mean(torch.log(prob) * target)
+                acc = torch.sum(torch.round(prob) * target) / target.shape[0]
+                loss_sum += loss.item()
+                accuracy_sum += acc.item()
+                prob_1 = prob[:, 0].tolist()
+                target_1 = target[:, 0].tolist()
+                for p, t in zip(prob_1, target_1):
+                    stored_arr.append([p, t])
+    finally:
+        if was_training:
+            model.train()
 
     if nums == 0:
         raise RuntimeError("Evaluation dataset is empty after preprocessing.")
@@ -150,25 +165,22 @@ def train_one_epoch(epoch, model, train_data, test_data, optimizer, maxlen, test
             break
         optimizer.zero_grad()
 
-        # (B,), (B), (B), (B, 100), (B, 100), (B, 100), (B, 2), (B), (128, 100, 5), (128, 100, 5) 
-        uids, mids, cats, mid_his, cat_his, mid_mask, target, s1, noclk_mids, noclk_cats = prepare_data(src, tgt, maxlen, return_neg=True)
+        uids, mids, cats, mid_his, cat_his, mid_mask, target, s1 = prepare_data(src, tgt, maxlen, return_neg=False)
         uids = transform(uids)
         mids = transform(mids)
         cats = transform(cats)
         mid_his = transform(mid_his)
         cat_his = transform(cat_his)
         mid_mask = transform(mid_mask)
-        noclk_mids = transform(noclk_mids)
-        noclk_cats = transform(noclk_cats)
         target = transform(target)
 
-        y_hat = model(uids, mids, cats, mid_his, cat_his, mid_mask, noclk_mids, noclk_cats) + 1e-8
+        y_hat = model(uids, mids, cats, mid_his, cat_his, mid_mask) + 1e-8
 
         loss = - torch.mean(torch.log(y_hat) * target)
         acc =  torch.sum(torch.round(y_hat) * target) / target.shape[0]
 
-        loss_sum += loss
-        accuracy_sum += acc
+        loss_sum += loss.item()
+        accuracy_sum += acc.item()
 
         loss.backward()
         optimizer.step()
@@ -176,13 +188,13 @@ def train_one_epoch(epoch, model, train_data, test_data, optimizer, maxlen, test
 
         if (iter % test_iter) == 0:
             print(f"epoch: {epoch}/iter: {iter}, train loss: {loss_sum / test_iter:.4f}, train acc: {accuracy_sum / test_iter:.4f}")
-            test_auc, test_loss, test_acc = eval(test_data, model, best_model_path)
+            test_auc, test_loss, test_acc = eval(test_data, model, best_model_path, maxlen)
             print(f"test_auc: {test_auc:.4f}, test_loss: {test_loss:.4f}, test_acc: {test_acc:.4f}")
             loss_sum = 0.0
             accuracy_sum = 0.0
 
         if (iter % save_iter) == 0:
-            torch.save({"epoch": epoch, "iter": iter, "model_state_dict": model.state_dict(), "optimizer_state_dict": optimizer.state_dict(), "loss": loss}, f"{model_path}_ep{epoch}_{iter}")
+            torch.save({"epoch": epoch, "iter": iter, "model_state_dict": model.state_dict(), "optimizer_state_dict": optimizer.state_dict(), "loss": loss.item()}, f"{model_path}_ep{epoch}_{iter}")
     
     return model, optimizer
 
@@ -222,13 +234,15 @@ def train(
                               cat_voc=cat_voc,
                               batch_size=batch_size,
                               maxlen=maxlen,
-                              shuffle_each_epoch=False)
+                              shuffle_each_epoch=False,
+                              use_neg_sampling=False)
     test_data = DataIterator(source=test_file,
                              uid_voc=uid_voc,
                              mid_voc=mid_voc,
                              cat_voc=cat_voc,
                              batch_size=batch_size,
-                             maxlen=maxlen)
+                             maxlen=maxlen,
+                             use_neg_sampling=False)
     n_uid, n_mid, n_cat = train_data.get_n()    # uid: 543060, mid: 367983, cat: 1601
 
     if model_type == "DIN":
@@ -244,7 +258,7 @@ def train(
     print(f"Total trainable params: {total_params}")
     
     model.to(device)
-    print('test_auc: %.4f, test_loss: %.4f, test_acc: %.4f' % eval(test_data, model, best_model_path))
+    print('test_auc: %.4f, test_loss: %.4f, test_acc: %.4f' % eval(test_data, model, best_model_path, maxlen))
 
     lr = 0.001
     optimizer = torch.optim.Adam(model.parameters(), lr=lr, betas=(0.9, 0.999), weight_decay=0.0001)
@@ -281,7 +295,8 @@ def test(
                              mid_voc=mid_voc,
                              cat_voc=cat_voc,
                              batch_size=batch_size,
-                             maxlen=maxlen)
+                             maxlen=maxlen,
+                             use_neg_sampling=False)
     
     n_uid, n_mid, n_cat = test_data.get_n()
     if model_type == "DIN":
@@ -293,15 +308,14 @@ def test(
     else:
         print(f"Invalid model type {model_type}")
         return
-    model.to(device)
-
-    checkpoint = torch.load(model_path)
+    checkpoint = torch.load(model_path, map_location="cpu")
     try:
         model.load_state_dict(checkpoint['model_state_dict'])
     except KeyError:
         model.load_state_dict(checkpoint)
+    model.to(device)
 
-    print('test_auc: %.4f, test_loss: %.4f, test_acc: %.4f' % eval(test_data, model, model_path))
+    print('test_auc: %.4f, test_loss: %.4f, test_acc: %.4f' % eval(test_data, model, model_path, maxlen))
 
 
 if __name__ == "__main__":

@@ -1,0 +1,5 @@
+cd /Users/patric/Documents/tolerance\ UQ
+python3 code/DIN/preprocess_kuairand_1k.py --history-maxlen 10
+
+cd /Users/patric/Documents/tolerance\ UQ/code/DIN
+python3 trainer.py --mode train --model DIN --epochs 1

@@ -33,12 +33,13 @@ class DataIterator:
                  mid_voc,
                  cat_voc,
                  batch_size=128,
-                 maxlen=10,
+                 maxlen=100,
                  skip_empty=False,
                  shuffle_each_epoch=False,
                  sort_by_length=True,
                  max_batch_size=20,
-                 minlen=None):
+                 minlen=None,
+                 use_neg_sampling=True):
         self.source_orig = copy.deepcopy(source)
         if shuffle_each_epoch:
             self.source = shuffle.main(self.source_orig, temporary=True)
@@ -47,35 +48,39 @@ class DataIterator:
         self.source_dicts = []
         for source_dict in [uid_voc, mid_voc, cat_voc]:
             self.source_dicts.append(load_dict(source_dict))
-        f_meta = open("../data/item-info", "r")
-        meta_map = {} # 2370585 keys
-        for line in f_meta:
-            arr = line.strip().split("\t")
-            if arr[0] not in meta_map:
-                meta_map[arr[0].encode("UTF-8")] = arr[1]
-        self.meta_id_map ={} # 367983
-        for key in meta_map:
-            val = meta_map[key].encode("UTF-8")
-            if key in self.source_dicts[1]:
-                mid_idx = self.source_dicts[1][key]
-            else:
-                mid_idx = 0
-            if val in self.source_dicts[2]:
-                cat_idx = self.source_dicts[2][val]
-            else:
-                cat_idx = 0
-            self.meta_id_map[mid_idx] = cat_idx
+        self.use_neg_sampling = use_neg_sampling
+        self.meta_id_map = {}
+        self.mid_list_for_random = []
+        if self.use_neg_sampling:
+            with open("../data/item-info", "r") as f_meta:
+                meta_map = {} # 2370585 keys
+                for line in f_meta:
+                    arr = line.strip().split("\t")
+                    if arr[0] not in meta_map:
+                        meta_map[arr[0].encode("UTF-8")] = arr[1]
+            self.meta_id_map ={} # 367983
+            for key in meta_map:
+                val = meta_map[key].encode("UTF-8")
+                if key in self.source_dicts[1]:
+                    mid_idx = self.source_dicts[1][key]
+                else:
+                    mid_idx = 0
+                if val in self.source_dicts[2]:
+                    cat_idx = self.source_dicts[2][val]
+                else:
+                    cat_idx = 0
+                self.meta_id_map[mid_idx] = cat_idx
 
-        f_review = open("../data/reviews-info", "r")
-        self.mid_list_for_random = [] # 8898041
-        for line in f_review:
-            arr = line.strip().split("\t")
-            tmp_idx = 0
-            tmp = arr[1].encode("UTF-8")
-            if tmp in self.source_dicts[1]:
-                tmp_idx = self.source_dicts[1][tmp]
-            self.mid_list_for_random.append(tmp_idx)
-        # print(f"Unique values {len(np.unique(np.array(self.mid_list_for_random)))}") #367982
+            with open("../data/reviews-info", "r") as f_review:
+                self.mid_list_for_random = [] # 8898041
+                for line in f_review:
+                    arr = line.strip().split("\t")
+                    tmp_idx = 0
+                    tmp = arr[1].encode("UTF-8")
+                    if tmp in self.source_dicts[1]:
+                        tmp_idx = self.source_dicts[1][tmp]
+                    self.mid_list_for_random.append(tmp_idx)
+            # print(f"Unique values {len(np.unique(np.array(self.mid_list_for_random)))}") #367982
         self.batch_size = batch_size
         self.maxlen = maxlen
         self.minlen = minlen
@@ -176,24 +181,29 @@ class DataIterator:
                 if self.skip_empty and (not mid_list):
                     continue
 
+                if self.maxlen is not None and len(mid_list) > self.maxlen:
+                    mid_list = mid_list[-self.maxlen:]
+                    cat_list = cat_list[-self.maxlen:]
+
                 noclk_mid_list = []
                 noclk_cat_list = []
-                for pos_mid in mid_list:
-                    noclk_tmp_mid = []
-                    noclk_tmp_cat = []
-                    noclk_index = 0
-                    while True:
-                        noclk_mid_indx = random.randint(0, len(self.mid_list_for_random)-1)
-                        noclk_mid = self.mid_list_for_random[noclk_mid_indx]
-                        if noclk_mid == pos_mid:
-                            continue
-                        noclk_tmp_mid.append(noclk_mid)
-                        noclk_tmp_cat.append(self.meta_id_map[noclk_mid])
-                        noclk_index += 1
-                        if noclk_index >= 5:
-                            break
-                    noclk_mid_list.append(noclk_tmp_mid)
-                    noclk_cat_list.append(noclk_tmp_cat)
+                if self.use_neg_sampling:
+                    for pos_mid in mid_list:
+                        noclk_tmp_mid = []
+                        noclk_tmp_cat = []
+                        noclk_index = 0
+                        while True:
+                            noclk_mid_indx = random.randint(0, len(self.mid_list_for_random)-1)
+                            noclk_mid = self.mid_list_for_random[noclk_mid_indx]
+                            if noclk_mid == pos_mid:
+                                continue
+                            noclk_tmp_mid.append(noclk_mid)
+                            noclk_tmp_cat.append(self.meta_id_map[noclk_mid])
+                            noclk_index += 1
+                            if noclk_index >= 5:
+                                break
+                        noclk_mid_list.append(noclk_tmp_mid)
+                        noclk_cat_list.append(noclk_tmp_cat)
                 source.append([uid, mid, cat, mid_list, cat_list, noclk_mid_list, noclk_cat_list])
                 target.append([float(ss[0]), 1-float(ss[0])])
 

@@ -36,7 +36,7 @@ class DeepInterestNetwork(nn.Module):
         mlp_params = sum(p.numel() for p in self.mlp.parameters() if p.requires_grad)
         print(f"MLP Layer trainable params: {mlp_params}")
 
-    def forward(self, uids, mids, cats, mid_his, cat_his, mid_mask, noclk_mids, noclk_cats, use_negsampling=False):
+    def forward(self, uids, mids, cats, mid_his, cat_his, mid_mask, noclk_mids=None, noclk_cats=None, use_negsampling=False):
         """input: uids, mids, cats, mid_his, cat_his, mid_mask, noclk_mids, noclk_cats
         """
         # item_eb, item_his_eb, mask
@@ -51,6 +51,8 @@ class DeepInterestNetwork(nn.Module):
         item_his_eb_sum = torch.sum(item_his_eb, dim=1) # [128, 36]
         
         if use_negsampling:
+            if noclk_mids is None or noclk_cats is None:
+                raise ValueError("Negative sampling tensors are required when use_negsampling=True.")
             noclk_mid_his_batch_eb = self.mid_embeddings(noclk_mids)
             noclk_cat_his_batch_eb = self.cat_embeddings(noclk_cats)
             noclk_item_his_eb = torch.concat((noclk_mid_his_batch_eb[:, :, 0, :], noclk_cat_his_batch_eb[:, :, 0, :]), -1)
