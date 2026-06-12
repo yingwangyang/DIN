@@ -43,6 +43,29 @@ def parse_args():
     return parser.parse_args()
 
 
+def row_int(row, key, default=0):
+    value = row.get(key)
+    if value is None or value == "":
+        return default
+    return int(float(value))
+
+
+def is_click_deep(row):
+    if row_int(row, "is_click") != 1:
+        return False
+
+    positive_action = (
+        row_int(row, "is_like") == 1
+        or row_int(row, "is_follow") == 1
+        or row_int(row, "is_comment") == 1
+        or row_int(row, "is_forward") == 1
+        or row_int(row, "is_profile_enter") == 1
+    )
+    deep_signal = row_int(row, "long_view") == 1 or positive_action
+
+    return deep_signal and row_int(row, "is_hate") != 1
+
+
 def first_tag_to_int(tag_value):
     if not tag_value:
         return 0
@@ -137,8 +160,15 @@ def main():
     skipped_no_history = 0
     total_rows = 0
     click_rows = 0
+    train_click_deep_rows = 0
+    train_click_only_rows = 0
+    test_click_deep_samples = 0
+    test_non_click_samples = 0
+    test_click_only_ignored = 0
 
-    print("Building DIN samples ...")
+    print("Building Group A DIN samples ...")
+    print("  train label: is_click")
+    print("  eval label: click+deep vs non-click, click-only ignored")
     with train_path.open("w", encoding="utf-8") as train_f, \
             test_path.open("w", encoding="utf-8") as test_f, \
             reviews_info_path.open("w", encoding="utf-8") as reviews_f:
@@ -148,7 +178,8 @@ def main():
 
             uid = int(row["user_id"])
             mid = int(row["video_id"])
-            label = int(row["is_click"])
+            click = row_int(row, "is_click")
+            click_deep = is_click_deep(row)
             cat = int(video_to_cat[mid]) if mid < len(video_to_cat) else 0
 
             observed_uids.add(uid)
@@ -160,28 +191,54 @@ def main():
             cats_hist = history_cat[uid]
 
             if mids_hist:
-                line = "\t".join(
-                    [
-                        str(label),
-                        str(uid),
-                        str(mid),
-                        str(cat),
-                        SEQ_SEP.join(str(x) for x in mids_hist),
-                        SEQ_SEP.join(str(x) for x in cats_hist),
-                    ]
-                )
-
                 if split_name == "test":
-                    test_f.write(line + "\n")
-                    test_samples += 1
+                    if click_deep:
+                        label = 1
+                        test_click_deep_samples += 1
+                    elif click == 0:
+                        label = 0
+                        test_non_click_samples += 1
+                    else:
+                        test_click_only_ignored += 1
+                        label = None
+
+                    if label is not None:
+                        line = "\t".join(
+                            [
+                                str(label),
+                                str(uid),
+                                str(mid),
+                                str(cat),
+                                SEQ_SEP.join(str(x) for x in mids_hist),
+                                SEQ_SEP.join(str(x) for x in cats_hist),
+                            ]
+                        )
+                        test_f.write(line + "\n")
+                        test_samples += 1
                 else:
+                    label = click
+                    line = "\t".join(
+                        [
+                            str(label),
+                            str(uid),
+                            str(mid),
+                            str(cat),
+                            SEQ_SEP.join(str(x) for x in mids_hist),
+                            SEQ_SEP.join(str(x) for x in cats_hist),
+                        ]
+                    )
                     train_f.write(line + "\n")
                     train_samples += 1
             else:
                 skipped_no_history += 1
 
-            if label == 1:
+            if click == 1:
                 click_rows += 1
+                if split_name == "train":
+                    if click_deep:
+                        train_click_deep_rows += 1
+                    else:
+                        train_click_only_rows += 1
                 mids_hist.append(mid)
                 cats_hist.append(cat)
                 trim_history(mids_hist, args.history_maxlen)
@@ -214,9 +271,14 @@ def main():
     print("\nDone.")
     print(f"  total log rows:        {total_rows:,}")
     print(f"  clicked rows:          {click_rows:,}")
+    print(f"  train click+deep rows: {train_click_deep_rows:,}")
+    print(f"  train click-only rows: {train_click_only_rows:,}")
     print(f"  skipped no history:    {skipped_no_history:,}")
     print(f"  train samples:         {train_samples:,}")
     print(f"  test samples:          {test_samples:,}")
+    print(f"  test click+deep:       {test_click_deep_samples:,}")
+    print(f"  test non-click:        {test_non_click_samples:,}")
+    print(f"  test click-only skip:  {test_click_only_ignored:,}")
     print(f"  unique users:          {len(observed_uids):,}")
     print(f"  unique videos:         {len(observed_mids):,}")
     print(f"  unique categories:     {len(observed_cats):,}")
