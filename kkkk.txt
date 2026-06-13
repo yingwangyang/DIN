@@ -1,3 +1,29 @@
 Group A:
 python3 code/DIN/preprocess_kuairand_1k.py --history-maxlen 100
 python3 trainer.py --mode train --epochs 2
+
+
+Group C:
+
+python3 code/DIN/preprocess_kuairand_1k_doublehead.py \
+  --history-maxlen 100
+
+cd "/path/to/tolerance UQ"
+python3 code/DIN/trainer_doublehead.py \
+  --mode all \
+  --epochs 3 \
+  --maxlen 100 \
+  --batch-size 1024 \
+  --mc-samples 20
+
+cd "/path/to/tolerance UQ"
+python3 code/DIN/build_groupC_data.py \
+  --pref-low 0.35 \
+  --pref-high 0.65 \
+  --hes-low 0.35 \
+  --hes-high 0.65 \
+  --uncertainty-high-quantile 0.75
+
+python3 trainer.py \
+  --mode train \
+  --epochs 2
